@@ -71,7 +71,17 @@ class ThinkpadFan(Sensor):
 
 class PowerClamp(Sensor):
 
-	path = '/sys/class/thermal/cooling_device8/cur_state'
+	def __init__(self):
+		self.path = None
+		for path in glob.glob('/sys/class/thermal/cooling_device*/'):
+			if os.path.exists(path + '/type'):
+				ty = getContents(path + '/type')
+				if ty == 'intel_powerclamp':
+					self.path = path + '/cur_state'
+					break
+		if self.path == None:
+			print("Could not find intel_powerclamp cooling device. Make sure it is modprobed and enabled.")
+			sys.exit(1)
 
 	def get_level(self):
 		return self._getint(self.path)
