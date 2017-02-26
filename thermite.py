@@ -4,8 +4,11 @@ import os
 import time
 import glob
 import sys
+import logging
+from logging import info, debug, warning, error, critical
+logging.basicConfig(level=logging.DEBUG)
 
-class Sensor(object):
+class ThermalDevice(object):
 
 	def _getint(self,path):
 		f = open(path,"r")
@@ -40,12 +43,31 @@ class Sensor(object):
 	def get(self):
 		return self._getint(self.path)
 
-class ThinkpadFan(Sensor):
+	def modprobe(self, mod):
+		debug("Loading module %s" % mod)
+		return subprocess.call(["/sbin/modprobe", mod ])
+
+
+class ThinkpadFan(ThermalDevice):
+
+	@property
+	def enabled(self):
+		debug("Checking to see if ThinkPad fan is enabled")
+		return os.path.exists('/proc/acpi/ibm/fan')
+
+	def activate(self):
+		if not self.enabled:
+			self.modprobe('thinkpad_acpi')
 
 	def __init__(self):
+		self.activate()
 		self.level = 0
 		self.max_level = 8
-		self.set_level(3)
+		if self.enabled:
+			debug("Thinkpad fan enabled. Setting start level to 3.")
+			self.set_level(3)
+		else:
+			debug("Could not detect ThinkPad fan.")
 	
 	def lower(self):
 		if self.level == 0:
@@ -69,19 +91,30 @@ class ThinkpadFan(Sensor):
 			level = str(level)
 		self._put('/proc/acpi/ibm/fan', 'level ' + level)
 
-class PowerClamp(Sensor):
+class IntelPowerClamp(ThermalDevice):
 
-	def __init__(self):
+	@property
+	def enabled(self):
+		debug("Checking to see if Intel PowerClamp is available")
+		return self.path != None
+
+	def detect(self):
 		self.path = None
+		debug("Attempting to locate Intel PowerClamp cooling device")
 		for path in glob.glob('/sys/class/thermal/cooling_device*/'):
 			if os.path.exists(path + '/type'):
 				ty = getContents(path + '/type')
 				if ty == 'intel_powerclamp':
+					debug("Found Intel PowerClamp")
 					self.path = path + '/cur_state'
-					break
+	
+	def __init__(self):
+		self.detect()
 		if self.path == None:
-			print("Could not find intel_powerclamp cooling device. Make sure it is modprobed and enabled.")
-			sys.exit(1)
+			self.modprobe('intel_powerclamp')
+			self.detect()
+			if self.path == None:
+				warn("Could not find intel_powerclamp cooling device.")
 
 	def get_level(self):
 		return self._getint(self.path)
@@ -89,12 +122,21 @@ class PowerClamp(Sensor):
 	def set_level(self,level):
 		self._putint(self.path, level)
 
-class Intel_PState(Sensor):
-	
+class IntelPState(ThermalDevice):
 	base_path = '/sys/devices/system/cpu/intel_pstate'
 
-	def __init__(self):
+	@property
+	def enabled(self):
+		debug("Checking to see if Intel PState driver is available")
+		return os.path.exists(self.base_path)
 
+	def __init__(self):
+		if not self.enabled:
+			self.modprobe("intel_pstate")
+			if not self.enabled:
+				warn("Intel PState driver is NOT available")
+		if self.enabled:
+			debug("Found Intel PState driver.")
 		self._putint(self.base_path + '/max_perf_pct', 100)
 		self._putint(self.base_path + '/min_perf_pct', 1)
 		self.level = self._getint(self.base_path + '/max_perf_pct')
@@ -108,82 +150,6 @@ class Intel_PState(Sensor):
 		if self.level > 100:
 			self.level = 100
 		self.set_level(self.level)
-
-class CpuFrequencySettings(Sensor):
-	
-
-	def __init__(self):
-		self.level = 0
-		self.inc = 1
-		base_path = '/sys/devices/system/cpu'
-		self.min_freq = self._getint(base_path + '/cpu0/cpufreq/cpuinfo_min_freq')
-		self.max_freq = self._getint(base_path + '/cpu0/cpufreq/cpuinfo_max_freq')
-		print(self.max_freq)
-		self.num_cpus = len(glob.glob(base_path + '/cpu[0-9]*'))
-		f_avail_freq = base_path + '/cpu0/cpufreq/scaling_available_frequencies'
-		if os.path.exists(f_avail_freq):
-			self.avail_freq = self._getints(f_avail_freq)
-			self.max_level = len(self.avail_freq)
-		else:
-			# get 
-			self.max_level = 255 
-			rng = self.max_freq - self.min_freq
-			self.avail_freq = []
-			for x in range(0,self.max_level):
-				self.avail_freq.append(self.min_freq + (rng * x)//self.max_level)
-			self.avail_freq.append(self.max_freq)
-
-		self.set_level(0)
-		self.going_up = True
-
-	def set_level(self, level):
-		freq = self.avail_freq[level]
-		base_path = '/sys/devices/system/cpu/cpu'
-		for x in range(0,self.num_cpus):
-			self._putint(base_path + str(x) + '/cpufreq/scaling_max_freq', freq)
-		print("set freq to level %s" % level)
-		self.level = level
-
-	def lower(self):
-		if self.level == 0:
-			return
-		self.level -= 1
-		self.set_level(self.level)
-
-		#if self.going_up:
-		#	# slow when we change direction
-		#	self.going_up = False
-		#	self.inc = 1
-		#self.level = self.level - self.inc
-		#self.inc = self.inc * 2
-		#if self.level < 0:
-		#	self.level = 0
-		#	self.inc = 1
-		#self.set_level(self.level)
-
-
-	def max(self):
-		if self.level == self.max_level:
-			return
-		self.level = self.max_level
-		self.set_level(self.level)
-		self.going_down = True
-		self.inc = 1
-
-	def upper(self):
-		if self.level == self.max_level:
-			return
-		self.level += 1
-		self.set_level(self.level)
-
-		#if not self.going_up:
-		#	self.going_up = True
-		#	self.inc = 1
-		#self.level = self.level + self.inc
-		#self.inc = self.inc * 2
-		#if self.level > self.max_level:
-		#	self.level = self.max_level
-		#self.set_level(self.level)
 
 def getContents(path):
 	if os.path.exists(path):
@@ -201,12 +167,14 @@ def scanPath(scanpath, prefixglob='*'):
 		return glob.glob(scanpath + '/' + prefixglob)
 	return []
 
+# ZONE SENSORS
 for dirpath in scanPath('/sys/class/thermal', prefixglob='thermal_zone*'):
 	sensors.append({
 		'name' : dirpath,
 		'temp' : dirpath + '/temp'
 	})
 
+# HWMON SENSORS
 for dirpath in scanPath('/sys/class/hwmon', prefixglob='hwmon*'):
 	temps = []
 	for dirpath2 in scanPath(dirpath, prefixglob='temp*_input'):
@@ -215,6 +183,11 @@ for dirpath in scanPath('/sys/class/hwmon', prefixglob='hwmon*'):
 		'name' : getContents(dirpath + '/name'),
 		'temp' : temps
 	})
+
+debug("Found %s temperature sensors." % len(sensors))
+if len(sensors) == 0:
+	critical("I need at least one temp sensor to work. Exiting.")
+	sys.exit(1)
 
 def getTemps():
 	global sensors
@@ -228,9 +201,9 @@ def getTemps():
 			temps.append(int(getContents(temp)))
 	return temps
 
-cpu = Intel_PState()
+cpu = IntelPState()
 fan = ThinkpadFan()
-clamp = PowerClamp()
+clamp = IntelPowerClamp()
 
 thresh = 65000
 fan_thresh = 50000
@@ -246,6 +219,9 @@ max_clamp = 50
 last_fan_count = 0
 last_freq_count = 0
 cpu.set_level(100)
+fan_duration = 0
+fan_level = 0
+fan.set_level(fan_level)
 while True:
 	last_max_temp = max_temp
 	temps = getTemps()
@@ -273,32 +249,6 @@ while True:
 		rise = True
 	else:
 		rise = False
-	if max_temp < 49000:
-		fan_targ = 0
-	#elif max_temp > 39000 and max_temp < 42000:
-	#	fan.set_level(1)
-	#elif max_temp >= 42000 and max_temp < 45000:
-	#	fan.set_level(2)
-	elif max_temp >= 49000 and max_temp < 48000:
-		fan_targ = 2
-	elif max_temp >= 48000 and max_temp < 51000:
-		fan_targ = 4
-	elif max_temp >= 51000 and max_temp < 54000:
-		fan_targ = 5
-	elif max_temp >= 54000 and max_temp < 57000 and avg_temp <= 60000:
-		fan_targ = 6
-	elif avg_temp >= 57000 and max_temp < 60000 and avg_temp <= 63000:
-		fan_targ = 7
-	else:
-		fan_targ = 8
-
-	if variability < 1000 and fan_targ < 6:
-		fan_targ -= 2
-	elif variability < 3000 and fan_targ < 6:
-		fan_targ -= 1
-	if fan_targ < 0:
-		fan_targ = 0
-	fan.set_level(fan_targ)
 
 	overtemp = False
 	extreme_temp = False
@@ -306,6 +256,59 @@ while True:
 		overtemp = True
 	if (max_temp > 80000):
 		extreme_temp = True
+	if not overtemp and max_temp > 60000:
+		hot = True
+	else:
+		hot = False
+	if not overtemp and not hot and max_temp > 55000:
+		warm = True
+	else:
+		warm = False
+	if max_temp < 40000:
+		cold = True
+	else:
+		cold = False
+	
+	# This fan algorithm works well for AC power, but for battery, we probably want
+	# to use modest additional powerclamping rather than turning on the fan, which
+	# will save power in two ways -- more idle and less power for fan.
+
+	# current AC algorithm:
+	# run fan independently, based on temperature,
+	# then, adjust cpu level gradually upwards unless max or overheat (in this case, lower significantly)
+	# also clamp if extreme temp, or overtemp and lowering cpu level to 75 does not help.
+
+	# proposed battery algorithm:
+	# adjust CPU based on CPU usage, just like AC algorithm.
+	# if system is getting hot, try to reign in temps with modest powerclamping.
+	# if modest powerclamping appears unsuccessful, then start utilizing fans in parallel with powerclamp.
+	# have a less-than-100 max cpu freq (75?) and be slower to raise it up again.
+
+	
+	min_fan = 1
+	fan_prevlevel = fan_level
+	if hot or overtemp:
+		fan_level = 8
+	elif warm and rise:
+		fan_level += 1
+	elif warm and not rise:
+		if fan_duration > 3:
+			fan_level -= 1
+	elif not warm or not hot or not overtemp:
+		fan_level = min_fan 
+	if fan_level < min_fan:
+		fan_level = min_fan
+	elif fan_level > 8:
+		fan_level = 8
+	if warm and fan_level > 6:
+		fan_level = 6
+	if cold:
+		fan_level = 0
+	if fan_prevlevel == fan_level:
+		fan_duration += 1
+	else:
+		fan_duration = 0
+	fan.set_level(fan_level)
 
 	cpu_level = cpu.level
 	if overtemp:
