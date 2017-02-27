@@ -201,6 +201,10 @@ def getTemps():
 			temps.append(int(getContents(temp)))
 	return temps
 
+if os.geteuid() != 0:
+	critical("You are not root. This will likely prevent thermite from working properly!")
+	sys.exit(1)
+
 cpu = IntelPState()
 fan = ThinkpadFan()
 clamp = IntelPowerClamp()
