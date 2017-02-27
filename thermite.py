@@ -30,7 +30,7 @@ class ThermalDevice(object):
 			f.write(s)
 			f.close()
 		except OSError:
-			print("error writing")
+			critical("error writing %s to %s" % (s, path))
 
 	def _putint(self,path,i):
 		try:
@@ -38,7 +38,7 @@ class ThermalDevice(object):
 			f.write(str(i))
 			f.close()
 		except OSError:
-			print("error writing")
+			critical("error writing %s to %s" % (i, path))
 
 	def get(self):
 		return self._getint(self.path)
@@ -344,7 +344,7 @@ while True:
 	if len(clamp_list) > variability_len:
 		del(clamp_list[0])
 
-	print("max_temp: %s, clamp %s, fan %s, cpu %s, var %s" % (max_temp, clamp_level, fan.level, cpu.level, variability))
+	info("max_temp: %s, clamp %s, fan %s, cpu %s, var %s" % (max_temp, clamp_level, fan.level, cpu.level, variability))
 
 
 	time.sleep(0.3)
