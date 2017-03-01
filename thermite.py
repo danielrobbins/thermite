@@ -30,7 +30,7 @@ class ThermalDevice(object):
 			f.write(s)
 			f.close()
 		except OSError:
-			critical("error writing %s to %s" % (s, path))
+			critical("error writing %s to %s.  Is fan_control=1 set?" % (s, path))
 
 	def _putint(self,path,i):
 		try:
@@ -38,7 +38,7 @@ class ThermalDevice(object):
 			f.write(str(i))
 			f.close()
 		except OSError:
-			critical("error writing %s to %s" % (i, path))
+			critical("error writing %s to %s.  Is fan_control=1 set?" % (i, path))
 
 	def get(self):
 		return self._getint(self.path)
