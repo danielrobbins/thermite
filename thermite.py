@@ -154,7 +154,11 @@ class IntelPState(ThermalDevice):
 def getContents(path):
 	if os.path.exists(path):
 		a = open(path,'r')
-		contents = a.read()
+		try:
+			contents = a.read()
+		except OSError:
+			# there is a possibility that we can't get temp data and this will fail:
+			return None
 		a.close()
 		return contents.strip()
 	else:
@@ -198,7 +202,12 @@ def getTemps():
 		else:
 			tempfiles = sensor['temp']
 		for temp in tempfiles:
-			temps.append(int(getContents(temp)))
+			t = getContents(temp)
+			if t == None:
+				# nouveau can present a temp sensor that is unreadable
+				continue
+			else:
+				temps.append(int(t))
 	return temps
 
 if os.geteuid() != 0:
@@ -226,6 +235,7 @@ cpu.set_level(100)
 fan_duration = 0
 fan_level = 0
 fan.set_level(fan_level)
+features = [ "cpufreq" ]
 while True:
 	last_max_temp = max_temp
 	temps = getTemps()
@@ -313,23 +323,25 @@ while True:
 	else:
 		fan_duration = 0
 	fan.set_level(fan_level)
-
+		
 	cpu_level = cpu.level
-	if overtemp:
-		if variability > 20000 and rise:
-			cpu_level -= 20
-		elif variability > 10000 and rise:
-			cpu_level -= 10
-		else:
-			cpu_level -= 5
-	elif cpu_level < target_cpu_level:
-		cpu_level += 5
 
-	if cpu_level > target_cpu_level:
-		cpu_level = target_cpu_level
-	elif cpu_level < 0:
-		cpu_level = 0
-	cpu.set_level(cpu_level)
+	if "cpufreq" in features:
+		if overtemp:
+			if variability > 20000 and rise:
+				cpu_level -= 20
+			elif variability > 10000 and rise:
+				cpu_level -= 10
+			else:
+				cpu_level -= 5
+		elif cpu_level < target_cpu_level:
+			cpu_level += 5
+
+		if cpu_level > target_cpu_level:
+			cpu_level = target_cpu_level
+		elif cpu_level < 0:
+			cpu_level = 0
+		cpu.set_level(cpu_level)
 
 	if extreme_temp:
 		clamp_level += 10
