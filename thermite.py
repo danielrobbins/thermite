@@ -227,6 +227,7 @@ last_max_temp = None
 variability_list = []
 variability_len = 10
 clamp_list = []
+idle_clamp_level = 20 
 clamp_level = 0
 max_clamp = 50 
 last_fan_count = 0
@@ -236,6 +237,42 @@ fan_duration = 0
 fan_level = 0
 fan.set_level(fan_level)
 features = [ "cpufreq" ]
+
+class ProcessorUsage(object):
+	def __init__(self):
+		self.prev = self.run()
+	
+	def run(self):
+		with open('/proc/stat','r') as f_stat:
+			while True:
+				line = f_stat.readline()
+				if line == None:
+					break
+				ls = line.split()
+				if len(ls) and ls[0] == 'cpu':
+					return list(map(int,ls[1:]))
+	
+	def calc(self):
+		cur = self.run()
+		previdle = self.prev[3] + self.prev[4]
+		idle = cur[3] + cur[4]
+
+		prevnonidle = self.prev[0] + self.prev[1] + self.prev[2] + self.prev[5] + self.prev[6] + self.prev[7]
+		nonidle = cur[0] + cur[1] + cur[2] + cur[5] + cur[6] + cur[7]
+
+		prevtotal = previdle + prevnonidle
+		total = idle + nonidle
+
+		totald = total - prevtotal
+		idled = idle - previdle
+
+		self.prev = cur
+		if totald == 0:
+			return 0
+		else:
+			return ((totald - idled)/totald) * 100
+
+pu = ProcessorUsage()
 while True:
 	last_max_temp = max_temp
 	temps = getTemps()
@@ -245,7 +282,8 @@ while True:
 		velocity = max_temp - last_max_temp
 	else:
 		velocity = 0
-
+	cpu_usage = pu.calc()
+	print("CPU", cpu_usage)
 	loadavg = os.getloadavg()[0]
 
 	target_cpu_level = int(loadavg * 100)
@@ -299,7 +337,7 @@ while True:
 	# have a less-than-100 max cpu freq (75?) and be slower to raise it up again.
 
 	
-	min_fan = 1
+	min_fan = 0
 	fan_prevlevel = fan_level
 	if hot or overtemp:
 		fan_level = 8
@@ -354,8 +392,14 @@ while True:
 		clamp_level = max_clamp 
 	if clamp_level < 0:
 		clamp_level = 0
-	
-	clamp.set_level(clamp_level)
+
+	if clamp_level == 0 and cpu_usage < 20:
+		cur_clamp_level = round(((20 - cpu_usage) / 20) * idle_clamp_level)
+		
+		print(cur_clamp_level, "idle clamp")
+	else:
+		cur_clamp_level = clamp_level
+	clamp.set_level(cur_clamp_level)
 	clamp_list.append(clamp_level)
 	if len(clamp_list) > variability_len:
 		del(clamp_list[0])
