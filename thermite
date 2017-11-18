@@ -1,21 +1,20 @@
- #!/sbin/runscript
- # thermite init script
- # Written by John Roman
- # Distributed under the terms of the GNU General Public License v2
- # $Header: $
+#!/sbin/runscript
+# thermite init script
+# Written by John Roman
+#Distributed under the terms of the GNU General Public License v2
+# $Header: $
 
- depend() {
+depend() {
 	need localmount
  }
 
- start() {
+start() {
 	ebegin "Starting Thermite"
-	start-stop-daemon --badckground --start --exec /usr/local/bin/thermite.py --make-pidfile --pidfile /var/run/thermite.pid
+	start-stop-daemon --background --start --exec /usr/local/bin/thermite.py --make-pidfile --pidfile /var/run/thermite.pid
     	eend $?
  }
 
- stop() {
+stop() {
 	start-stop-daemon --stop --exec /usr/local/thermite.py --pidfile /var/run/thermite.pid
  }
-
 
